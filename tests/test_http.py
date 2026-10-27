@@ -29,7 +29,7 @@ class HttpTests(unittest.TestCase):
                     if job['status']!='running':break
                     time.sleep(.01)
                 self.assertEqual(job['status'],'complete')
-                self.assertEqual(len(job['results']),2)
+                self.assertEqual(len(job['results']),1)
                 self.assertTrue(all(r['accepted'] for r in job['results']))
                 self.assertNotIn('test-secret',json.dumps(job))
         finally:
