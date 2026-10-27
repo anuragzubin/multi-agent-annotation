@@ -156,10 +156,13 @@ def run_job(job_id, payload):
         for index, item in enumerate(payload['files']):
             audio = base64.b64decode(item['data'], validate=True)
             extension = item['name'].rsplit('.', 1)[-1].lower()
-            for side, provider in enumerate(payload['providers']):
-                label = f"{item['name']} · Provider {'AB'[side]}"
-                update(activity=f'{label}: generating STT draft')
+            for provider in payload['providers'][:1]:
+                label = item['name']
+                update(activity=f'{label}: generating Transcriber STT draft')
                 draft = stt(provider, item['name'], audio)
+                ref_provider = payload['providers'][1]
+                update(activity=f'{label}: generating Reviewer STT reference')
+                stt_reference = stt(ref_provider, item['name'], audio)
                 auto_transcript = draft
                 feedback = 'Initial submission. Improve the auto-transcript against the audio and guidelines.'
                 history = []
@@ -177,6 +180,8 @@ def run_job(job_id, payload):
                     review = agent(payload['reviewer'], 'You are exclusively the Reviewer Agent. Listen to the audio and audit the submitted transcript against it and the guidelines. Return error counts and actionable feedback only. Identify the location and nature of each issue so the Transcriber can correct it. Never write, rewrite, or return a transcript or replacement passages. Do not rubber-stamp the submission.',
                         json.dumps({'guidelines': payload['guidelines'], 'submission': transcript,
                                     'reference_if_available': item.get('reference', ''),
+                                    'stt_reference_transcript': stt_reference,
+                                    'stt_reference_note': 'Independent machine transcript from a different speech-to-text system. Use it only to spot possible differences. It is not ground truth and may be wrong: judge against the audio and guidelines, and never copy it.',
                                     'counting_rule': 'Count substitutions, deletions, insertions and guideline violations; count each defect once. evaluated_words is the number of words audited. Include every identified defect in issues with a timestamp or submitted-text location and a correction instruction. Do not supply replacement transcript text.',
                                     'output_schema': {'error_count': 'integer', 'evaluated_words': 'positive integer', 'issues': ['specific finding']}}), audio, extension)
                     metrics = review_metrics(review, item.get('reference'), transcript)
@@ -186,7 +191,8 @@ def run_job(job_id, payload):
                     draft = transcript
                     feedback = {'reviewer_feedback': review, 'error_rate': metrics['error_rate'],
                                 'reference_wer': metrics['reference_wer'], 'required_error_rate': 2}
-                results.append({'file': item['name'], 'provider': 'AB'[side], 'provider_model': provider['model'],
+                results.append({'file': item['name'], 'provider': 'A', 'provider_model': provider['model'],
+                                'stt_reference': stt_reference, 'stt_reference_model': ref_provider['model'],
                                 'auto_transcript': auto_transcript, 'history': history,
                                 'accepted': history[-1]['accepted']})
                 # Return only transcription outputs; never provider configuration or credentials.
@@ -207,8 +213,8 @@ def validate(payload):
         raise ValueError('Cycle limit must be between 1 and 10.')
     if not isinstance(payload.get('guidelines'), str) or not payload['guidelines'].strip():
         raise ValueError('Provide transcription guidelines.')
-    if not isinstance(payload.get('providers'), list) or not 1 <= len(payload['providers']) <= 2:
-        raise ValueError('Configure one STT provider.')
+    if not isinstance(payload.get('providers'), list) or len(payload['providers']) != 2:
+        raise ValueError('Configure two STT providers: the Transcriber draft and the Reviewer reference.')
     for conf in payload['providers']:
         if not isinstance(conf, dict):
             raise ValueError('Every provider needs an endpoint and API key.')
@@ -227,7 +233,7 @@ def validate(payload):
         if not conf['url'].startswith('https://'):
             raise ValueError('Provider endpoints must use HTTPS.')
     identity = lambda c: (c.get('kind') or 'openai', c['url'], c.get('model', ''))
-    if len(payload['providers']) == 2 and identity(payload['providers'][0]) == identity(payload['providers'][1]):
+    if identity(payload['providers'][0]) == identity(payload['providers'][1]):
         raise ValueError('Choose two different STT APIs, endpoints or models.')
     total = 0
     seen = set()
