@@ -76,4 +76,70 @@ class PipelineTests(unittest.TestCase):
         p=self.payload();p['files'][0]['name']='test.exe'
         with self.assertRaises(ValueError):server.validate(p)
 
+    def test_provider_validation(self):
+        p=self.payload()
+        p['providers'][0]={**p['providers'][0],'kind':'azure','model':''}
+        server.validate(p)  # Azure may omit the model field (locales optional)
+        p['providers'][1]={**p['providers'][1],'kind':'deepgram','model':''}
+        with self.assertRaises(ValueError):server.validate(p)  # Deepgram needs a model
+        p['providers'][1]={**p['providers'][1],'model':'nova-3'}
+        server.validate(p)  # different kinds with same url are distinct providers
+        p['providers'][1]={**p['providers'][1],'kind':'unknown-api'}
+        with self.assertRaises(ValueError):server.validate(p)
+
+
+class FakeResponse:
+    def __init__(self, payload): self.payload=payload
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def read(self): return json.dumps(self.payload).encode()
+
+class SttAdapterTests(unittest.TestCase):
+    def call(self, kind, reply, model='m'):
+        captured={}
+        def fake_urlopen(req, timeout=None):
+            captured['req']=req
+            return FakeResponse(reply)
+        with patch.object(server,'urlopen',side_effect=fake_urlopen):
+            text=server.stt({'kind':kind,'url':'https://api.example.com/stt','model':model,'key':'test-secret'},'clip.mp3',b'AUDIO')
+        req=captured['req']
+        headers={k.lower():v for k,v in req.header_items()}
+        self.assertNotIn('test-secret',str(text))
+        return text,req,headers
+
+    def test_openai_adapter(self):
+        text,req,headers=self.call('openai',{'text':'openai text'})
+        self.assertEqual(text,'openai text')
+        self.assertEqual(headers['authorization'],'Bearer test-secret')
+        self.assertIn('multipart/form-data',headers['content-type'])
+        self.assertIn(b'name="model"',req.data) and self.assertIn(b'AUDIO',req.data)
+
+    def test_deepgram_adapter(self):
+        text,req,headers=self.call('deepgram',{'results':{'channels':[{'alternatives':[{'transcript':'dg text'}]}]}},model='nova-3')
+        self.assertEqual(text,'dg text')
+        self.assertEqual(headers['authorization'],'Token test-secret')
+        self.assertEqual(headers['content-type'],'audio/mpeg')
+        self.assertEqual(req.data,b'AUDIO')
+        self.assertIn('model=nova-3',req.full_url)
+
+    def test_elevenlabs_adapter(self):
+        text,req,headers=self.call('elevenlabs',{'text':'el text'},model='scribe_v1')
+        self.assertEqual(text,'el text')
+        self.assertEqual(headers['xi-api-key'],'test-secret')
+        self.assertIn(b'name="model_id"',req.data) and self.assertIn(b'AUDIO',req.data)
+
+    def test_azure_adapter(self):
+        text,req,headers=self.call('azure',{'combinedPhrases':[{'text':'line one'},{'text':'line two'}]},model='en-US,hi-IN')
+        self.assertEqual(text,'line one\nline two')
+        self.assertEqual(headers['ocp-apim-subscription-key'],'test-secret')
+        self.assertIn(b'name="definition"',req.data) and self.assertIn(b'hi-IN',req.data) and self.assertIn(b'name="audio"',req.data)
+
+    def test_unknown_kind_and_empty_text(self):
+        with self.assertRaises(ValueError):
+            with patch.object(server,'urlopen',return_value=FakeResponse({'text':'ok'})):
+                server.stt({'kind':'other','url':'https://api.example.com','model':'m','key':'k'},'clip.mp3',b'AUDIO')
+        with self.assertRaises(ValueError):
+            with patch.object(server,'urlopen',return_value=FakeResponse({'results':{'channels':[]}})):
+                server.stt({'kind':'deepgram','url':'https://api.example.com','model':'m','key':'k'},'clip.mp3',b'AUDIO')
+
 if __name__=='__main__':unittest.main()
