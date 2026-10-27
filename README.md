@@ -15,12 +15,16 @@ The server binds to 127.0.0.1:8000 by default. Set `HOST` and `PORT` to change t
 
 1. Upload 1–10 MP3/WAV files (20 MB each, 45 MB total). Short clips work best with audio-model context limits.
 2. Enter guidelines, and optionally a trusted reference transcript for each file.
-3. Configure two STT endpoints, models and API keys. Defaults are OpenAI and Groq examples; you must provide credentials and confirm model availability.
+3. Configure two STT providers: pick a Speech API per provider (OpenAI-compatible, Azure AI Speech fast transcription, Deepgram, or ElevenLabs), then set the endpoint, model and API key. Defaults are OpenAI and Groq examples; you must provide credentials and confirm model availability.
+   - **OpenAI-compatible**: multipart `file`, `model`, `response_format=json`; expects `{"text":"..."}` (OpenAI, Groq, and compatible APIs).
+   - **Azure AI Speech (fast transcription)**: endpoint `https://<resource>.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15`, key = Speech resource key. The model field carries optional comma-separated locales (e.g. `en-US` or `en-US,hi-IN`); leave it empty for automatic language detection.
+   - **Deepgram**: endpoint `https://api.deepgram.com/v1/listen`, model e.g. `nova-3`. The raw audio is posted with `Authorization: Token <key>`.
+   - **ElevenLabs**: endpoint `https://api.elevenlabs.io/v1/speech-to-text`, model ID e.g. `scribe_v1` or `scribe_v2`, with `xi-api-key: <key>`.
 4. Expand **Agent configuration** and configure transcriber and reviewer models/keys. Both must support OpenAI Chat Completions `input_audio` content (MP3/WAV) and return text containing JSON. `gpt-audio` is an editable example, not a verified binding. Text-only models cannot review the audio and will fail.
 5. Start annotation. Each STT draft is independently transcribed by the Transcriber, then audited by the Reviewer. The Transcriber alone writes and corrects transcripts. The Reviewer only returns issue locations, actionable feedback and error counts; it never generates replacement transcript text. Reviewer errors above 2% trigger rework with feedback. Each submission has its own cycle history and limit (1–10). A limit hit stays flagged; it is never silently approved. Both sources are reviewed for every file unless an API fails, in which case completed results remain available.
 6. Compare both submissions and export results as JSON.
 
-Custom STT APIs must accept multipart `file`, `model`, `response_format=json` and return `{"text":"..."}`. Agent APIs must accept OpenAI-compatible Chat Completions messages with inline audio and return `choices[0].message.content`. Arbitrary vendor-specific request formats require adapters. All configured APIs must use HTTPS. Keys are only sent by the server to the entered endpoint; enter trusted endpoints. The browser does not persist keys in local storage. Audio is shared with the selected STT provider and both agent endpoints. Runtime network policy must allow their hostnames, such as `api.openai.com` and `api.groq.com`.
+The built-in adapters cover OpenAI-compatible, Azure fast transcription, Deepgram and ElevenLabs STT APIs; other vendor-specific request formats require new adapters in `stt()`. Agent APIs must accept OpenAI-compatible Chat Completions messages with inline audio and return `choices[0].message.content`. All configured APIs must use HTTPS. Keys are only sent by the server to the entered endpoint; enter trusted endpoints. The browser does not persist keys in local storage. Audio is shared with the selected STT provider and both agent endpoints. Runtime network policy must allow their hostnames, such as `api.openai.com` and `api.groq.com`.
 
 ## Scores and acceptance
 
@@ -38,7 +42,7 @@ python -m unittest discover -s tests -v
 node --check static/app.js
 ```
 
-Tests cover threshold boundaries, agreement, measured WER, rework feedback, both STT submissions, maximum-cycle handling, provider errors, and input validation. The app has no database, background queue, production authentication or vendor-specific adapters.
+Tests cover threshold boundaries, agreement, measured WER, rework feedback, both STT submissions, maximum-cycle handling, provider errors, input validation, and the request/response shape of all four STT adapters (mocked HTTP). The app has no database, background queue or production authentication.
 
 ## Public live-test deployment
 
