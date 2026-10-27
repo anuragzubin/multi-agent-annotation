@@ -25,27 +25,37 @@ class PipelineTests(unittest.TestCase):
         conf={'url':'https://example.com/api','key':'test-secret','model':'audio-model'}
         return {'files':[{'name':'test.wav','data':base64.b64encode(b'audio').decode()}], 'providers':[conf,{**conf,'model':'other'}], 'transcriber':conf,'reviewer':conf,'guidelines':'Verbatim','max_cycles':3}
 
-    def test_rework_and_both_providers(self):
+    def test_rework_with_reviewer_reference(self):
         p=self.payload();server.validate(p)
         server.JOBS['test']={'status':'running','results':[]}
-        replies=[{'transcript':'hello there'},review(3),{'transcript':'hello world'},review(),{'transcript':'hello world'},review()]
-        with patch.object(server,'stt',return_value='hello draft') as stt, patch.object(server,'agent',side_effect=replies) as agent:
+        replies=[{'transcript':'hello there'},review(3),{'transcript':'hello world'},review()]
+        with patch.object(server,'stt',side_effect=['hello draft','deepgram reference']) as stt, patch.object(server,'agent',side_effect=replies) as agent:
             server.run_job('test',p)
         job=server.JOBS['test']
         self.assertEqual(job['status'],'complete')
         self.assertEqual(stt.call_count,2)
-        self.assertEqual([len(r['history']) for r in job['results']],[2,1])
-        self.assertTrue(all(r['accepted'] for r in job['results']))
+        self.assertEqual(len(job['results']),1)
+        r=job['results'][0]
+        self.assertEqual(len(r['history']),2)
+        self.assertTrue(r['accepted'])
+        self.assertEqual(r['auto_transcript'],'hello draft')
+        self.assertEqual(r['stt_reference'],'deepgram reference')
+        self.assertEqual(stt.call_args_list[0].args[0],p['providers'][0])
+        self.assertEqual(stt.call_args_list[1].args[0],p['providers'][1])
+        first_transcriber=json.loads(agent.call_args_list[0].args[2])
+        self.assertEqual(first_transcriber['draft'],'hello draft')
+        self.assertNotIn('deepgram reference',agent.call_args_list[0].args[2])
+        first_review=json.loads(agent.call_args_list[1].args[2])
+        self.assertEqual(first_review['stt_reference_transcript'],'deepgram reference')
+        self.assertIn('not ground truth',first_review['stt_reference_note'])
         self.assertIn('Fix words',agent.call_args_list[2].args[2])
         self.assertNotIn('test-secret',str(job))
         self.assertNotIn('corrected_transcript',str(job))
-        first_review_prompt = json.loads(agent.call_args_list[1].args[2])
-        self.assertNotIn('corrected_transcript', first_review_prompt['output_schema'])
+        self.assertNotIn('corrected_transcript', first_review['output_schema'])
         self.assertIn('Never write', agent.call_args_list[1].args[1])
         rework_prompt = json.loads(agent.call_args_list[2].args[2])
         self.assertEqual(rework_prompt['draft'], 'hello there')
         self.assertEqual(rework_prompt['review_feedback']['reviewer_feedback'],review(3))
-        self.assertEqual(job['results'][0]['history'][1]['transcript'], 'hello world')
 
     def test_rejects_mixed_agent_roles(self):
         for replies in [
@@ -76,13 +86,10 @@ class PipelineTests(unittest.TestCase):
         p=self.payload();p['files'][0]['name']='test.exe'
         with self.assertRaises(ValueError):server.validate(p)
 
-    def test_single_provider_runs_one_stt_draft(self):
-        p=self.payload();p['providers']=p['providers'][:1];p['max_cycles']=4;server.validate(p)
-        server.JOBS['single']={'status':'running','results':[]}
-        with patch.object(server,'stt',return_value='hello draft') as stt, patch.object(server,'agent',side_effect=[{'transcript':'hello world'},review()]):
-            server.run_job('single',p)
-        self.assertEqual(stt.call_count,1)
-        self.assertEqual(len(server.JOBS['single']['results']),1)
+    def test_requires_two_providers(self):
+        p=self.payload()
+        p['providers']=p['providers'][:1]
+        with self.assertRaises(ValueError):server.validate(p)
         p['providers']=[]
         with self.assertRaises(ValueError):server.validate(p)
 
