@@ -19,9 +19,8 @@ $('agents').innerHTML = providerForm('transcriber','Transcriber agent','T','gpt-
 $('providers').addEventListener('change',e=>{
   const select=e.target.closest('select[id$="-kind"]');if(!select)return;
   const id=select.id.slice(0,-5), api=STT_APIS[select.value];
-  const url=$(`${id}-url`), model=$(`${id}-model`);
-  if(!url.value.trim()||Object.values(STT_APIS).some(a=>a.url===url.value.trim())) url.value=api.url;
-  if(!model.value.trim()||Object.values(STT_APIS).some(a=>a.model&&a.model===model.value.trim())) model.value=api.model;
+  $(`${id}-url`).value=api.url;
+  $(`${id}-model`).value=api.model;
   $(`${id}-model-label`).textContent=api.modelLabel;
 });
 function config(id) {
