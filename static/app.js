@@ -1,12 +1,34 @@
 const $ = id => document.getElementById(id);
 let audioFiles = [], currentJob = null, running = false;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const STT_APIS = {
+  openai:{label:'OpenAI-compatible (OpenAI, Groq, …)',url:'https://api.openai.com/v1/audio/transcriptions',model:'whisper-1',modelLabel:'Model'},
+  azure:{label:'Azure AI Speech (fast transcription)',url:'https://<resource>.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15',model:'',modelLabel:'Locales (optional, e.g. en-US or en-US,hi-IN)'},
+  deepgram:{label:'Deepgram',url:'https://api.deepgram.com/v1/listen',model:'nova-3',modelLabel:'Model'},
+  elevenlabs:{label:'ElevenLabs',url:'https://api.elevenlabs.io/v1/speech-to-text',model:'scribe_v1',modelLabel:'Model ID'}
+};
 function providerForm(id, title, badge, model, url) {
   return `<div class="provider"><h3><b>${badge}</b>${title}</h3><label for="${id}-url">API endpoint</label><input id="${id}-url" type="url" value="${url}" autocomplete="off"><label for="${id}-model">Model</label><input id="${id}-model" value="${model}" autocomplete="off"><label for="${id}-key">API key</label><input id="${id}-key" type="password" placeholder="Enter your API key" autocomplete="off"></div>`;
 }
-$('providers').innerHTML = providerForm('a','STT provider A','A','whisper-1','https://api.openai.com/v1/audio/transcriptions') + providerForm('b','STT provider B','B','whisper-large-v3-turbo','https://api.groq.com/openai/v1/audio/transcriptions');
+function sttForm(id, title, badge, kind, model, url) {
+  const options = Object.entries(STT_APIS).map(([value,api]) => `<option value="${value}"${value===kind?' selected':''}>${api.label}</option>`).join('');
+  return `<div class="provider"><h3><b>${badge}</b>${title}</h3><label for="${id}-kind">Speech API</label><select id="${id}-kind">${options}</select><label for="${id}-url">API endpoint</label><input id="${id}-url" type="url" value="${url}" autocomplete="off"><label for="${id}-model" id="${id}-model-label">${STT_APIS[kind].modelLabel}</label><input id="${id}-model" value="${model}" autocomplete="off"><label for="${id}-key">API key</label><input id="${id}-key" type="password" placeholder="Enter your API key" autocomplete="off"></div>`;
+}
+$('providers').innerHTML = sttForm('a','STT provider A','A','openai','whisper-1','https://api.openai.com/v1/audio/transcriptions') + sttForm('b','STT provider B','B','openai','whisper-large-v3-turbo','https://api.groq.com/openai/v1/audio/transcriptions');
 $('agents').innerHTML = providerForm('transcriber','Transcriber agent','T','gpt-audio','https://api.openai.com/v1/chat/completions') + providerForm('reviewer','Reviewer agent','R','gpt-audio','https://api.openai.com/v1/chat/completions');
-function config(id) {return Object.fromEntries(['url','model','key'].map(k => [k,$(`${id}-${k}`).value.trim()]));}
+$('providers').addEventListener('change',e=>{
+  const select=e.target.closest('select[id$="-kind"]');if(!select)return;
+  const id=select.id.slice(0,-5), api=STT_APIS[select.value];
+  const url=$(`${id}-url`), model=$(`${id}-model`);
+  if(!url.value.trim()||Object.values(STT_APIS).some(a=>a.url===url.value.trim())) url.value=api.url;
+  if(!model.value.trim()||Object.values(STT_APIS).some(a=>a.model&&a.model===model.value.trim())) model.value=api.model;
+  $(`${id}-model-label`).textContent=api.modelLabel;
+});
+function config(id) {
+  const c=Object.fromEntries(['url','model','key'].map(k => [k,$(`${id}-${k}`).value.trim()]));
+  if($(`${id}-kind`)) c.kind=$(`${id}-kind`).value;
+  return c;
+}
 function showFiles() {
   $('file-count').innerHTML = `${audioFiles.length} <em>in this batch</em>`;
   $('files').innerHTML = audioFiles.map((item,i) => `<div><div class="file-row"><div class="file-name">♫ &nbsp; ${esc(item.file.name)}<small>${(item.file.size / 1024 / 1024).toFixed(2)} MB · two submissions</small></div><button class="remove" data-remove="${i}" aria-label="Remove ${esc(item.file.name)}" ${running?'disabled':''}>✕</button></div><details class="reference"><summary>Optional reference transcript · ${esc(item.file.name)}</summary><textarea data-reference="${i}" rows="3" placeholder="A trusted reference enables measured word error rate.">${esc(item.reference)}</textarea></details></div>`).join('');
@@ -45,8 +67,9 @@ function render(job) {
 $('run').addEventListener('click',async()=>{
  const providers=[config('a'),config('b')],transcriber=config('transcriber'),reviewer=config('reviewer');
  if(!audioFiles.length) return alert('Add at least one audio file.');
- if(![...providers,transcriber,reviewer].every(c=>c.url.startsWith('https://')&&c.model&&c.key)) return alert('Set a HTTPS endpoint, model and API key for both providers and both agents. Expand Agent configuration to enter agent keys.');
- if(providers[0].url===providers[1].url&&providers[0].model===providers[1].model) return alert('Choose different STT endpoints or models for the two sources.');
+ if(![transcriber,reviewer].every(c=>c.url.startsWith('https://')&&c.model&&c.key)) return alert('Set a HTTPS endpoint, model and API key for both agents. Expand Agent configuration to enter agent keys.');
+ if(!providers.every(c=>c.url.startsWith('https://')&&c.key&&(c.model||c.kind==='azure'))) return alert('Set a HTTPS endpoint, API key and model for both STT providers. Azure takes optional locales instead of a model.');
+ if(['kind','url','model'].every(k=>providers[0][k]===providers[1][k])) return alert('Choose different STT APIs, endpoints or models for the two sources.');
  if(!Number.isInteger(+$('cycles').value)||+$('cycles').value<1||+$('cycles').value>10) return alert('Choose 1–10 review cycles.');
  if(!$('guidelines').value.trim()) return alert('Enter transcription guidelines.');
  running=true;$('run').disabled=true;$('run').textContent='Agents working…';$('agreement').innerHTML='— <em>awaiting review</em>';$('export').hidden=true;
