@@ -191,7 +191,7 @@ def run_job(job_id, payload):
                                 'accepted': history[-1]['accepted']})
                 # Return only transcription outputs; never provider configuration or credentials.
                 update(results=list(results))
-        update(status='complete', activity='Both submissions reviewed for every file.')
+        update(status='complete', activity='Every file reviewed.')
     except Exception as exc:
         message = str(exc) if isinstance(exc, ValueError) else 'Provider communication failed. Check API compatibility and server connectivity.'
         update(status='failed', activity=message[:400])
@@ -207,8 +207,8 @@ def validate(payload):
         raise ValueError('Cycle limit must be between 1 and 10.')
     if not isinstance(payload.get('guidelines'), str) or not payload['guidelines'].strip():
         raise ValueError('Provide transcription guidelines.')
-    if not isinstance(payload.get('providers'), list) or len(payload['providers']) != 2:
-        raise ValueError('Configure two STT providers.')
+    if not isinstance(payload.get('providers'), list) or not 1 <= len(payload['providers']) <= 2:
+        raise ValueError('Configure one STT provider.')
     for conf in payload['providers']:
         if not isinstance(conf, dict):
             raise ValueError('Every provider needs an endpoint and API key.')
@@ -227,7 +227,7 @@ def validate(payload):
         if not conf['url'].startswith('https://'):
             raise ValueError('Provider endpoints must use HTTPS.')
     identity = lambda c: (c.get('kind') or 'openai', c['url'], c.get('model', ''))
-    if identity(payload['providers'][0]) == identity(payload['providers'][1]):
+    if len(payload['providers']) == 2 and identity(payload['providers'][0]) == identity(payload['providers'][1]):
         raise ValueError('Choose two different STT APIs, endpoints or models.')
     total = 0
     seen = set()
