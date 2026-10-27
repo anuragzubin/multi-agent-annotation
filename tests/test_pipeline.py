@@ -76,6 +76,16 @@ class PipelineTests(unittest.TestCase):
         p=self.payload();p['files'][0]['name']='test.exe'
         with self.assertRaises(ValueError):server.validate(p)
 
+    def test_single_provider_runs_one_stt_draft(self):
+        p=self.payload();p['providers']=p['providers'][:1];p['max_cycles']=4;server.validate(p)
+        server.JOBS['single']={'status':'running','results':[]}
+        with patch.object(server,'stt',return_value='hello draft') as stt, patch.object(server,'agent',side_effect=[{'transcript':'hello world'},review()]):
+            server.run_job('single',p)
+        self.assertEqual(stt.call_count,1)
+        self.assertEqual(len(server.JOBS['single']['results']),1)
+        p['providers']=[]
+        with self.assertRaises(ValueError):server.validate(p)
+
     def test_provider_validation(self):
         p=self.payload()
         p['providers'][0]={**p['providers'][0],'kind':'azure','model':''}
