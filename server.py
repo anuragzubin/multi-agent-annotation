@@ -29,11 +29,6 @@ def distance(a, b):
     return row[-1]
 
 
-def agreement(submission, correction):
-    a, b = words(submission), words(correction)
-    return round(100 * max(0, 1 - distance(a, b) / max(len(a), len(b), 1)), 2)
-
-
 def request_json(url, key, body, content_type='application/json'):
     if not url.startswith('https://') and not (os.getenv('ALLOW_LOCAL_API') == '1' and url.startswith('http://127.0.0.1:')):
         raise ValueError('API endpoints must use HTTPS.')
@@ -78,15 +73,17 @@ def agent(config, role, prompt, audio, extension):
 
 
 def review_metrics(review, reference=None, transcript=''):
-    if not isinstance(review.get('corrected_transcript'), str) or not review['corrected_transcript'].strip():
-        raise ValueError('Reviewer omitted corrected_transcript.')
+    if not isinstance(review, dict) or set(review) != {'error_count', 'evaluated_words', 'issues'}:
+        raise ValueError('Reviewer must return feedback only: error_count, evaluated_words and issues; no transcript.')
     issues = review.get('issues')
-    if not isinstance(issues, list) or any(not isinstance(x, str) for x in issues):
+    if not isinstance(issues, list) or any(not isinstance(x, str) or not x.strip() for x in issues):
         raise ValueError('Reviewer issues must be a list of strings.')
     total = review.get('evaluated_words')
     errors = review.get('error_count')
     if type(total) is not int or total <= 0 or type(errors) is not int or errors < 0:
         raise ValueError('Reviewer must report nonnegative integer error_count and positive evaluated_words.')
+    if errors and not issues:
+        raise ValueError('Reviewer must provide actionable feedback when errors are reported.')
     estimated = 100 * errors / total
     reference_rate = None
     if reference and words(reference):
@@ -94,7 +91,7 @@ def review_metrics(review, reference=None, transcript=''):
     rate = max(estimated, reference_rate if reference_rate is not None else 0)
     return {'error_rate': round(rate, 4), 'estimated_error_rate': round(estimated, 4),
             'reference_wer': round(reference_rate, 4) if reference_rate is not None else None,
-            'accepted': rate <= 2, 'agreement': agreement(transcript, review['corrected_transcript'])}
+            'accepted': rate <= 2, 'agreement': round(max(0, 100 - estimated), 2)}
 
 
 def run_job(job_id, payload):
@@ -115,24 +112,27 @@ def run_job(job_id, payload):
                 history = []
                 for cycle in range(1, payload['max_cycles'] + 1):
                     update(activity=f'{label}: transcription / cycle {cycle}')
-                    submission = agent(payload['transcriber'], 'You are a careful audio transcription agent.',
+                    submission = agent(payload['transcriber'], 'You are exclusively the Transcriber Agent. Listen to the original audio and produce the complete transcript following the guidelines. Only you may write or correct transcript text. On rework, use reviewer feedback to make corrections, verifying each against the audio. Do not review, score, or approve your own work.',
                         json.dumps({'guidelines': payload['guidelines'], 'draft': draft, 'review_feedback': feedback,
                                     'output_schema': {'transcript': 'complete corrected transcript'}}), audio, extension)
+                    if not isinstance(submission, dict) or set(submission) != {'transcript'}:
+                        raise ValueError('Transcriber must return only a transcript, not review or scoring fields.')
                     transcript = submission.get('transcript')
                     if not isinstance(transcript, str) or not transcript.strip():
                         raise ValueError('Transcriber returned an empty transcript.')
                     update(activity=f'{label}: independent review / cycle {cycle}')
-                    review = agent(payload['reviewer'], 'You are an independent audio transcription reviewer. Listen to the audio and audit every word and all guidelines. Do not rubber-stamp the submission.',
+                    review = agent(payload['reviewer'], 'You are exclusively the Reviewer Agent. Listen to the audio and audit the submitted transcript against it and the guidelines. Return error counts and actionable feedback only. Identify the location and nature of each issue so the Transcriber can correct it. Never write, rewrite, or return a transcript or replacement passages. Do not rubber-stamp the submission.',
                         json.dumps({'guidelines': payload['guidelines'], 'submission': transcript,
                                     'reference_if_available': item.get('reference', ''),
-                                    'counting_rule': 'Count substitutions, deletions, insertions and guideline violations; count each defect once. evaluated_words is the number of words audited. Include every identified defect in issues. Return a fully corrected transcript.',
-                                    'output_schema': {'corrected_transcript': 'string', 'error_count': 'integer', 'evaluated_words': 'positive integer', 'issues': ['specific finding']}}), audio, extension)
+                                    'counting_rule': 'Count substitutions, deletions, insertions and guideline violations; count each defect once. evaluated_words is the number of words audited. Include every identified defect in issues with a timestamp or submitted-text location and a correction instruction. Do not supply replacement transcript text.',
+                                    'output_schema': {'error_count': 'integer', 'evaluated_words': 'positive integer', 'issues': ['specific finding']}}), audio, extension)
                     metrics = review_metrics(review, item.get('reference'), transcript)
                     history.append({'cycle': cycle, 'transcript': transcript, 'review': review, **metrics})
                     if metrics['accepted']:
                         break
                     draft = transcript
-                    feedback = json.dumps(review)
+                    feedback = {'reviewer_feedback': review, 'error_rate': metrics['error_rate'],
+                                'reference_wer': metrics['reference_wer'], 'required_error_rate': 2}
                 results.append({'file': item['name'], 'provider': 'AB'[side], 'provider_model': provider['model'],
                                 'auto_transcript': auto_transcript, 'history': history,
                                 'accepted': history[-1]['accepted']})
