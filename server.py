@@ -76,8 +76,23 @@ def review_metrics(review, reference=None, transcript=''):
     if not isinstance(review, dict) or set(review) != {'error_count', 'evaluated_words', 'issues'}:
         raise ValueError('Reviewer must return feedback only: error_count, evaluated_words and issues; no transcript.')
     issues = review.get('issues')
-    if not isinstance(issues, list) or any(not isinstance(x, str) or not x.strip() for x in issues):
-        raise ValueError('Reviewer issues must be a list of strings.')
+    if not isinstance(issues, list):
+        raise ValueError('Reviewer issues must be a list.')
+    normalized = []
+    for item in issues:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, bool) or item is None:
+            text = ''
+        elif isinstance(item, (int, float)):
+            text = str(item)
+        else:
+            text = json.dumps(item, ensure_ascii=False)
+        if not text:
+            raise ValueError('Reviewer issues must be a list of nonempty findings.')
+        normalized.append(text)
+    review['issues'] = normalized
+    issues = normalized
     total = review.get('evaluated_words')
     errors = review.get('error_count')
     if type(total) is not int or total <= 0 or type(errors) is not int or errors < 0:
