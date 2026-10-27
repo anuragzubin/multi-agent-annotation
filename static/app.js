@@ -14,8 +14,8 @@ function sttForm(id, title, badge, kind, model, url) {
   const options = Object.entries(STT_APIS).map(([value,api]) => `<option value="${value}"${value===kind?' selected':''}>${api.label}</option>`).join('');
   return `<div class="provider"><h3><b>${badge}</b>${title}</h3><label for="${id}-kind">Speech API</label><select id="${id}-kind">${options}</select><label for="${id}-url">API endpoint</label><input id="${id}-url" type="url" value="${url}" autocomplete="off"><label for="${id}-model" id="${id}-model-label">${STT_APIS[kind].modelLabel}</label><input id="${id}-model" value="${model}" autocomplete="off"><label for="${id}-key">API key</label><input id="${id}-key" type="password" placeholder="Enter your API key" autocomplete="off"></div>`;
 }
-$('providers').innerHTML = sttForm('a','STT provider A','A','openai','whisper-1','https://api.openai.com/v1/audio/transcriptions') + sttForm('b','STT provider B','B','openai','whisper-large-v3-turbo','https://api.groq.com/openai/v1/audio/transcriptions');
-$('agents').innerHTML = providerForm('transcriber','Transcriber agent','T','gpt-audio','https://api.openai.com/v1/chat/completions') + providerForm('reviewer','Reviewer agent','R','gpt-audio','https://api.openai.com/v1/chat/completions');
+$('providers').innerHTML = sttForm('a','STT provider A','A','deepgram','nova-3','https://api.deepgram.com/v1/listen') + sttForm('b','STT provider B','B','openai','whisper-large-v3-turbo','https://api.groq.com/openai/v1/audio/transcriptions');
+$('agents').innerHTML = providerForm('transcriber','Transcriber agent','T','gpt-audio-1.5','https://api.openai.com/v1/chat/completions') + providerForm('reviewer','Reviewer agent','R','gpt-audio-1.5','https://api.openai.com/v1/chat/completions');
 $('providers').addEventListener('change',e=>{
   const select=e.target.closest('select[id$="-kind"]');if(!select)return;
   const id=select.id.slice(0,-5), api=STT_APIS[select.value];
